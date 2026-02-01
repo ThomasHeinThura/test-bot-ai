@@ -1,0 +1,80 @@
+# ============================
+# Falco custom rules for OpenClaw host
+# Place as: config/falco/falco-rules.yaml
+# Mapped to: /etc/falco/rules.d/custom-rules.yaml
+# ============================
+
+# --- Base macros (safe to redefine, they exist in default rules too) ---
+
+- macro: container
+  condition: (container.id != host)
+
+- list: shell_binaries
+  items: [bash, csh, ksh, sh, tcsh, zsh, dash]
+
+- macro: shell_procs
+  condition: proc.name in (shell_binaries)
+
+- macro: spawned_process
+  condition: (evt.type in (execve, execveat))
+
+- macro: open_write
+  condition: >
+    (evt.type in (open, openat, openat2) and
+     evt.is_open_write=true and
+     fd.typechar = 'f' and
+     fd.num >= 0)
+
+- macro: outbound
+  condition: >
+    (((evt.type = connect and evt.dir=<) or
+      (evt.type in (sendto,sendmsg) and evt.dir=< and
+       fd.l4proto != tcp and fd.connected=false and fd.name_changed=true)) and
+     (fd.typechar = 4 or fd.typechar = 6))
+
+# Local networks we consider "internal"
+- list: local_networks
+  items: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+
+- macro: outbound_to_internet
+  condition: (outbound and not fd.snet in (local_networks))
+
+# --- OpenClaw specific macros ---
+
+- macro: openclaw_container
+  condition: (container and container.name contains "openclaw")
+
+- macro: openclaw_proc
+  condition: (proc.name = "node" and proc.cmdline contains "dist/index.js")
+
+# --- Rules ---
+
+# 1. Shell spawned in any container
+- rule: shell_in_container
+  desc: Shell spawned inside a container (interactive or non-interactive)
+  condition: >
+    spawned_process and
+    container and
+    shell_procs
+  output: >
+    Shell spawned in container
+    (user=%user.name user_loginuid=%user.loginuid
+    container_id=%container.id container_name=%container.name
+    shell=%proc.name parent=%proc.pname cmdline=%proc.cmdline)
+  priority: WARNING
+  tags: [container, shell, mitre_execution]
+
+# 2. Shell spawned in OpenClaw container
+- rule: shell_in_openclaw_container
+  desc: Shell spawned in the OpenClaw gateway container
+  condition: >
+    spawned_process and
+    openclaw_container and
+    shell_procs
+  output: >
+    Shell spawned in OpenClaw container
+    (user=%user.name user_loginuid=%user.loginuid
+    container_id=%container.id container_name=%container.name
+    shell=%proc.name parent=%proc.pname cmdline=%proc.cmdline)
+  priority: CRITICAL
+  tags: [container, shell, openclaw, mitre_execution]

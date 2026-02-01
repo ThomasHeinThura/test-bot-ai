@@ -1,0 +1,48 @@
+# Environment variables (CONTAINS SECRETS!)
+.env
+.env.local
+.env.*.local
+
+# Secrets
+.secrets/
+*.key
+*.pem
+
+# Data directories (databases, logs, caches)
+data/
+logs/
+certs/
+
+# Docker volumes
+*_data/
+*_logs/
+
+# Grafana provisioning may contain sensitive info
+config/grafana/provisioning/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.log
+*.pid
+
+# Backup files
+*.bak
+*.backup
+
+# Documentation files (can be recreated)
+DEPLOYMENT-SUMMARY.md
+PRODUCTION-SECURITY-CHECKLIST.md
+MONITORING-STATUS.md
+OPENCLAW-WHATSAPP-SETUP.md
+QUICK-REFERENCE.md

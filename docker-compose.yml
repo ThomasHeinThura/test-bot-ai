@@ -1,0 +1,262 @@
+services:
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:2.11.3
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"  # Admin UI
+    environment:
+      DB_SQLITE_FILE: /data/database.sqlite
+      DISABLE_IPV6: 'true'
+      TZ: ${TZ}
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    networks:
+      - frontend
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:81/api"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 512m
+    cpus: 0.5
+
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:latest
+    restart: unless-stopped
+    user: "1000:1000"
+    secrets:
+      - openai_key
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_TOKEN}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_MODEL: ${AZURE_OPENAI_MODEL}
+      TZ: ${TZ}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export AZURE_OPENAI_KEY="$(cat /run/secrets/openai_key)"
+        exec node dist/index.js gateway --bind lan --port 18789 --allow-unconfigured
+    volumes:
+      - openclaw_data:/home/node/.openclaw
+      - openclaw_workspace:/home/node/.openclaw/workspace
+    tmpfs:
+      - /tmp:size=256M,mode=1777
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=unconfined
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:18789/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    mem_limit: 2560m
+    cpus: 1.5
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.105.0
+    restart: unless-stopped
+    command:
+      - --storageDataPath=/storage
+      - --retentionPeriod=15d
+      - --httpListenAddr=:8428
+      - --loggerLevel=WARN
+    volumes:
+      - vm_data:/storage
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -nv -t 1 -O- http://127.0.0.1:8428/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    mem_limit: 300m
+    cpus: 0.5
+
+  loki:
+    image: grafana/loki:3.1.1
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+      - ./config/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+    tmpfs:
+      - /tmp:size=128M,mode=1777
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    mem_limit: 600m
+    cpus: 0.5
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./config/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - npm_data:/var/log/npm:ro
+      - falco_logs:/var/log/falco:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9080/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    mem_limit: 200m
+    cpus: 0.3
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASS}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_HTTPONLY: "true"
+      GF_SERVER_ROOT_URL: https://grf.bimats.net
+      GF_LOG_LEVEL: warn
+      TZ: ${TZ}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    tmpfs:
+      - /tmp:size=128M,mode=1777
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "472:0"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    mem_limit: 512m
+    cpus: 0.5
+
+  falco:
+    image: falcosecurity/falco-no-driver:0.38.1
+    restart: unless-stopped
+    privileged: true
+    environment:
+      FALCO_LOG_LEVEL: warning
+      HOST_ROOT: /host
+      TZ: ${TZ}
+    volumes:
+      - /proc:/host/proc:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/falco/falco-rules.yaml:/etc/falco/rules.d/custom-rules.yaml:ro
+      - falco_logs:/var/log/falco
+    networks:
+      - backend
+    command:
+      - falco
+      - -o
+      - engine.kind=nodriver
+      - -o
+      - file_output.enabled=true
+      - -o
+      - file_output.filename=/var/log/falco/falco.log
+      - -o
+      - json_output=true
+      - -o
+      - http_output.enabled=true
+      - -o
+      - http_output.url=http://falcosidekick:2801
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8765/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    mem_limit: 512m
+    cpus: 0.5
+
+  falcosidekick:
+    image: falcosecurity/falcosidekick:2.30.0
+    restart: unless-stopped
+    environment:
+      LOKI_HOSTPORT: http://loki:3100
+      LOKI_ENDPOINT: /loki/api/v1/push
+      LOKI_TENANT: openclaw
+      DEBUG: "false"
+      TZ: ${TZ}
+    networks:
+      - backend
+    depends_on:
+      - loki
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:2801/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 0.3
+
+secrets:
+  openai_key:
+    file: /home/bimdevops/.secrets/openai_key
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+
+volumes:
+  openclaw_data:
+  openclaw_workspace:
+  npm_data:
+  npm_letsencrypt:
+  falco_logs:
+  loki_data:
+  vm_data:
+  grafana_data:
+

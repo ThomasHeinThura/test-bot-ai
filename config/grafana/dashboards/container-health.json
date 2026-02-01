@@ -1,0 +1,44 @@
+{
+  "dashboard": {
+    "title": "Container Health Overview",
+    "tags": ["docker", "monitoring"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "title": "Container Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(container_last_seen{name=~\".+\"})",
+            "legendFormat": "Running Containers"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "title": "Memory Usage by Container",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "container_memory_usage_bytes{name=~\".+\"}",
+            "legendFormat": "{{name}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "title": "CPU Usage by Container",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(container_cpu_usage_seconds_total{name=~\".+\"}[5m])",
+            "legendFormat": "{{name}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      }
+    ],
+    "schemaVersion": 36,
+    "version": 1
+  }
+}
